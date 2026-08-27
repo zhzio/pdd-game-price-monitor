@@ -5,9 +5,9 @@ const GAMES = [
     short: "王国之泪",
     target: 280,
     queries: [
-      "塞尔达传说 王国之泪 Switch2",
-      "王国之泪 NS2",
-      "王国之泪 Switch 2"
+      "王国之泪",
+      "塞尔达王国之泪",
+      "塞尔达传说 王国之泪"
     ]
   },
   {
@@ -16,9 +16,9 @@ const GAMES = [
     short: "空轨2nd",
     target: 400,
     queries: [
-      "空之轨迹 the 2nd Switch2",
-      "空轨2nd NS2",
-      "空之轨迹2nd Switch 2"
+      "空之轨迹",
+      "空之轨迹2nd",
+      "空轨2nd"
     ]
   }
 ];
@@ -26,7 +26,7 @@ const GAMES = [
 function norm(v = "") {
   return String(v)
     .toLowerCase()
-    .replace(/[　\s]+/g, "")
+    .replace(/\s+/g, "")
     .replace(/[·•・:：\-—_()（）【】[\]\/\\]/g, "");
 }
 
@@ -61,7 +61,6 @@ function matchesGame(game, title) {
 
     const second =
       t.includes("2nd") ||
-      t.includes("第二部") ||
       t.includes("空之轨迹2") ||
       t.includes("空之軌跡2") ||
       t.includes("空轨2") ||
@@ -74,16 +73,16 @@ function matchesGame(game, title) {
 }
 
 async function md5Upper(text) {
-  const bytes =
+  const data =
     new TextEncoder().encode(text);
 
-  const hash =
+  const digest =
     await crypto.subtle.digest(
       "MD5",
-      bytes
+      data
     );
 
-  return [...new Uint8Array(hash)]
+  return [...new Uint8Array(digest)]
     .map(
       b =>
         b.toString(16)
@@ -93,49 +92,32 @@ async function md5Upper(text) {
     .toUpperCase();
 }
 
-async function createSign(
-  params,
-  secret
-) {
-  const keys =
-    Object.keys(params).sort();
+async function sign(params, secret) {
+  let source = secret;
 
-  let source =
-    secret;
-
-  for (const key of keys) {
+  for (
+    const key
+    of Object.keys(params).sort()
+  ) {
     source +=
       key +
       params[key];
   }
 
-  source +=
-    secret;
+  source += secret;
 
   return md5Upper(source);
 }
 
-async function pddCall(
-  env,
-  extra
-) {
-  if (!env.PDD_CLIENT_ID) {
-    throw new Error(
-      "未设置 PDD_CLIENT_ID"
-    );
-  }
+async function pddCall(env, extra) {
+  if (!env.PDD_CLIENT_ID)
+    throw new Error("缺 PDD_CLIENT_ID");
 
-  if (!env.PDD_CLIENT_SECRET) {
-    throw new Error(
-      "未设置 PDD_CLIENT_SECRET"
-    );
-  }
+  if (!env.PDD_CLIENT_SECRET)
+    throw new Error("缺 PDD_CLIENT_SECRET");
 
-  if (!env.PDD_PID) {
-    throw new Error(
-      "未设置 PDD_PID"
-    );
-  }
+  if (!env.PDD_PID)
+    throw new Error("缺 PDD_PID");
 
   const params = {
     client_id:
@@ -143,9 +125,7 @@ async function pddCall(
 
     timestamp:
       String(
-        Math.floor(
-          Date.now() / 1000
-        )
+        Math.floor(Date.now() / 1000)
       ),
 
     data_type:
@@ -158,7 +138,7 @@ async function pddCall(
   };
 
   params.sign =
-    await createSign(
+    await sign(
       params,
       env.PDD_CLIENT_SECRET
     );
@@ -207,8 +187,9 @@ async function pddCall(
       data.error_response;
 
     throw new Error(
-      `PDD API ${e.error_code || ""}/${e.sub_code || ""}: ` +
-      `${e.sub_msg || e.error_msg || "未知错误"}`
+      e.sub_msg ||
+      e.error_msg ||
+      "PDD API error"
     );
   }
 
@@ -230,36 +211,21 @@ function simplify(g) {
     goodsName:
       g.goods_name || null,
 
-    mallName:
-      g.mall_name || null,
-
     goodsSign:
       g.goods_sign || null,
 
     price,
 
-    couponDiscount:
-      coupon,
-
     afterCouponPrice:
-      price !== null
-        ? Math.max(
+      price === null
+        ? null
+        : Math.max(
             0,
             price - coupon
-          )
-        : null,
-
-    sales:
-      g.sales_tip ??
-      g.sold_quantity ??
-      null,
+          ),
 
     activityTags:
-      Array.isArray(
-        g.activity_tags
-      )
-        ? g.activity_tags
-        : [],
+      g.activity_tags || [],
 
     image:
       g.goods_thumbnail_url ||
@@ -284,7 +250,7 @@ async function searchKeyword(
         pid:
           env.PDD_PID,
 
-        // 只搜索百亿补贴
+        // 百亿补贴
         activity_tags:
           JSON.stringify([7]),
 
@@ -296,47 +262,24 @@ async function searchKeyword(
       }
     );
 
-  const result =
+  const response =
     data.goods_search_response ||
     {};
 
-  const list =
-    Array.isArray(
-      result.goods_list
-    )
-      ? result.goods_list
-      : [];
-
-  return list.map(
-    simplify
-  );
-}
-
-function eligible(
-  game,
-  item
-) {
-  const title =
-    item.goodsName || "";
-
-  const price =
-    item.afterCouponPrice ??
-    item.price;
-
-  return (
-    matchesGame(game, title) &&
-    isNS2(title) &&
-    typeof price === "number" &&
-    Number.isFinite(price) &&
-    price > 0
-  );
+  return Array.isArray(
+    response.goods_list
+  )
+    ? response.goods_list.map(
+        simplify
+      )
+    : [];
 }
 
 async function scanGame(
   env,
   game
 ) {
-  const items =
+  const map =
     new Map();
 
   const errors =
@@ -357,56 +300,62 @@ async function scanGame(
         const item
         of list
       ) {
-        const key =
+        const id =
           item.goodsSign ||
           `${item.goodsName}|${item.price}`;
 
-        if (!items.has(key)) {
-          items.set(
-            key,
-            item
-          );
-        }
+        map.set(
+          id,
+          item
+        );
       }
 
-    } catch (error) {
+    } catch (e) {
       errors.push({
         query,
-
         error:
           String(
-            error?.message ||
-            error
+            e?.message || e
           )
       });
     }
   }
 
-  const rawCandidates =
-    [...items.values()];
+  const raw =
+    [...map.values()];
 
-  const matches =
-    rawCandidates
-      .filter(
-        item =>
-          eligible(
+  const valid =
+    raw.filter(
+      item => {
+        const price =
+          item.afterCouponPrice ??
+          item.price;
+
+        return (
+          matchesGame(
             game,
-            item
-          )
+            item.goodsName || ""
+          ) &&
+          isNS2(
+            item.goodsName || ""
+          ) &&
+          typeof price === "number" &&
+          price > 0
+        );
+      }
+    );
+
+  valid.sort(
+    (a, b) =>
+      (
+        a.afterCouponPrice ??
+        a.price
+      ) -
+      (
+        b.afterCouponPrice ??
+        b.price
       )
-      .sort(
-        (a, b) =>
-          (
-            a.afterCouponPrice ??
-            a.price ??
-            Infinity
-          ) -
-          (
-            b.afterCouponPrice ??
-            b.price ??
-            Infinity
-          )
-      );
+  );
 
   return {
     id:
@@ -425,38 +374,32 @@ async function scanGame(
       game.target,
 
     source:
-      "百亿补贴",
+      "百亿补贴-DDK",
 
     rawCount:
-      rawCandidates.length,
+      raw.length,
 
     eligibleCount:
-      matches.length,
+      valid.length,
 
     best:
-      matches[0] ||
-      null,
+      valid[0] || null,
 
-    topMatches:
-      matches.slice(0, 5),
-
-    // 调试用：能看到百补API到底返回了什么
     rawCandidates:
-      rawCandidates.slice(0, 10),
+      raw.slice(0, 10),
 
     errors
   };
 }
 
 async function scanAll(env) {
-  const scans =
-    [];
+  const result = [];
 
   for (
     const game
     of GAMES
   ) {
-    scans.push(
+    result.push(
       await scanGame(
         env,
         game
@@ -464,7 +407,7 @@ async function scanAll(env) {
     );
   }
 
-  return scans;
+  return result;
 }
 
 function priceOf(scan) {
@@ -477,8 +420,7 @@ function priceOf(scan) {
 
 function money(v) {
   if (
-    typeof v !== "number" ||
-    !Number.isFinite(v)
+    typeof v !== "number"
   ) {
     return "—";
   }
@@ -493,47 +435,13 @@ function money(v) {
   );
 }
 
-function beijingTime(date) {
-  const shifted =
-    new Date(
-      date.getTime() +
-      8 * 60 * 60 * 1000
-    );
-
-  return {
-    date:
-      shifted
-        .toISOString()
-        .slice(0, 10),
-
-    hour:
-      shifted
-        .getUTCHours(),
-
-    minute:
-      shifted
-        .getUTCMinutes(),
-
-    iso:
-      shifted
-        .toISOString()
-        .replace(
-          "Z",
-          "+08:00"
-        )
-  };
-}
-
 async function bark(
   env,
   title,
   body
 ) {
-  if (!env.BARK_KEY) {
-    throw new Error(
-      "未设置 BARK_KEY"
-    );
-  }
+  if (!env.BARK_KEY)
+    throw new Error("缺 BARK_KEY");
 
   const key =
     String(
@@ -551,20 +459,19 @@ async function bark(
   const url =
     `${base}/` +
     `${encodeURIComponent(title)}/` +
-    `${encodeURIComponent(body)}` +
-    `?group=${encodeURIComponent("游戏卡带价格雷达")}`;
+    `${encodeURIComponent(body)}`;
 
-  const response =
+  const r =
     await fetch(url);
 
-  if (!response.ok) {
+  if (!r.ok) {
     throw new Error(
-      `Bark 推送失败：${response.status}`
+      `Bark ${r.status}`
     );
   }
 }
 
-async function readState(
+async function getState(
   env,
   id
 ) {
@@ -573,9 +480,7 @@ async function readState(
       `game:${id}`
     );
 
-  if (!raw) {
-    return {};
-  }
+  if (!raw) return {};
 
   try {
     return JSON.parse(raw);
@@ -584,7 +489,7 @@ async function readState(
   }
 }
 
-async function writeState(
+async function saveState(
   env,
   id,
   state
@@ -595,10 +500,33 @@ async function writeState(
   );
 }
 
-async function processPrices(
+function bjTime(date) {
+  const d =
+    new Date(
+      date.getTime() +
+      8 * 3600000
+    );
+
+  return {
+    date:
+      d.toISOString()
+        .slice(0, 10),
+
+    hour:
+      d.getUTCHours(),
+
+    minute:
+      d.getUTCMinutes()
+  };
+}
+
+async function monitor(
   env,
-  scans
+  date
 ) {
+  const scans =
+    await scanAll(env);
+
   const states =
     {};
 
@@ -606,8 +534,8 @@ async function processPrices(
     const scan
     of scans
   ) {
-    const previous =
-      await readState(
+    const old =
+      await getState(
         env,
         scan.id
       );
@@ -615,24 +543,24 @@ async function processPrices(
     const price =
       priceOf(scan);
 
-    let belowTarget =
+    let below =
       Boolean(
-        previous.belowTarget
+        old.belowTarget
       );
 
     const oldLow =
-      typeof previous.historicalLow === "number"
-        ? previous.historicalLow
+      typeof old.historicalLow === "number"
+        ? old.historicalLow
         : null;
 
-    const historicalLow =
+    const low =
       typeof price === "number"
         ? (
             oldLow === null
               ? price
               : Math.min(
-                  oldLow,
-                  price
+                  price,
+                  oldLow
                 )
           )
         : oldLow;
@@ -640,54 +568,39 @@ async function processPrices(
     if (
       typeof price === "number" &&
       price <= scan.target &&
-      !belowTarget
+      !below
     ) {
-      try {
-        await bark(
-          env,
+      await bark(
+        env,
 
-          "🎯 百亿补贴到目标价",
+        "🎯 百亿补贴到目标价",
 
-          `${scan.name} NS2\n` +
-          `当前最低：${money(price)}\n` +
-          `目标价：≤ ${money(scan.target)}\n` +
-          `${scan.best?.goodsName || ""}`
-        );
+        `${scan.name} NS2\n` +
+        `最低：${money(price)}\n` +
+        `目标：≤ ${money(scan.target)}`
+      );
 
-        belowTarget =
-          true;
-
-      } catch (error) {
-        console.error(
-          "Bark failed",
-          error
-        );
-
-        belowTarget =
-          false;
-      }
+      below =
+        true;
     }
 
-    // 涨价、消失，都重新解锁下一次提醒
     if (
       typeof price !== "number" ||
       price > scan.target
     ) {
-      belowTarget =
+      below =
         false;
     }
 
-    const next = {
+    const state = {
       lastPrice:
         price,
 
-      historicalLow,
+      historicalLow:
+        low,
 
-      belowTarget,
-
-      lastGoodsSign:
-        scan.best?.goodsSign ||
-        null,
+      belowTarget:
+        below,
 
       lastGoodsName:
         scan.best?.goodsName ||
@@ -698,151 +611,301 @@ async function processPrices(
           .toISOString()
     };
 
-    await writeState(
+    await saveState(
       env,
       scan.id,
-      next
+      state
     );
 
     states[
       scan.id
     ] =
-      next;
+      state;
   }
 
-  return states;
+  const bj =
+    bjTime(date);
+
+  if (
+    bj.hour === 8 &&
+    bj.minute <= 20
+  ) {
+    const meta =
+      "meta:lastDailyReportDate";
+
+    const last =
+      await env.PRICE_STATE.get(
+        meta
+      );
+
+    if (
+      last !== bj.date
+    ) {
+      const lines =
+        scans.map(
+          scan => {
+            const p =
+              priceOf(scan);
+
+            return (
+              `${scan.short} NS2：` +
+              `${money(p)} ｜ ` +
+              `目标 ${money(scan.target)}`
+            );
+          }
+        );
+
+      await bark(
+        env,
+        "☀️ 08:00 游戏价格晨报",
+        lines.join("\n")
+      );
+
+      await env.PRICE_STATE.put(
+        meta,
+        bj.date
+      );
+    }
+  }
+
+  return {
+    scans,
+    states
+  };
 }
 
-async function morningReport(
-  env,
-  scans,
-  states,
-  scheduledDate
+
+/*
+ * --------------------------
+ * Browser Run 消费者端测试
+ * --------------------------
+ */
+
+function htmlToVisibleText(html) {
+  return html
+    .replace(
+      /<script[\s\S]*?<\/script>/gi,
+      " "
+    )
+    .replace(
+      /<style[\s\S]*?<\/style>/gi,
+      " "
+    )
+    .replace(
+      /<[^>]+>/g,
+      "\n"
+    )
+    .replace(
+      /&nbsp;/gi,
+      " "
+    )
+    .replace(
+      /&amp;/gi,
+      "&"
+    )
+    .replace(
+      /&lt;/gi,
+      "<"
+    )
+    .replace(
+      /&gt;/gi,
+      ">"
+    )
+    .replace(
+      /\n\s*\n+/g,
+      "\n"
+    )
+    .trim();
+}
+
+function contexts(
+  text,
+  word,
+  max = 8
 ) {
-  const bj =
-    beijingTime(
-      scheduledDate
+  const result = [];
+
+  let from =
+    0;
+
+  const lower =
+    text.toLowerCase();
+
+  const needle =
+    word.toLowerCase();
+
+  while (
+    result.length < max
+  ) {
+    const i =
+      lower.indexOf(
+        needle,
+        from
+      );
+
+    if (i === -1)
+      break;
+
+    result.push(
+      text.slice(
+        Math.max(
+          0,
+          i - 180
+        ),
+        Math.min(
+          text.length,
+          i + 500
+        )
+      )
     );
 
-  if (
-    bj.hour !== 8 ||
-    bj.minute > 20
-  ) {
-    return false;
+    from =
+      i +
+      needle.length;
   }
 
-  const metaKey =
-    "meta:lastDailyReportDate";
+  return result;
+}
 
-  const last =
-    await env.PRICE_STATE.get(
-      metaKey
+async function browserTest(
+  env,
+  query
+) {
+  if (!env.BROWSER) {
+    throw new Error(
+      "BROWSER binding 未生效"
     );
-
-  if (
-    last === bj.date
-  ) {
-    return false;
   }
 
-  const lines =
-    scans.map(
-      scan => {
-        const price =
-          priceOf(scan);
+  const target =
+    "https://mobile.yangkeduo.com/search_result.html" +
+    `?search_key=${encodeURIComponent(query)}` +
+    "&search_type=goods&source=index";
 
-        const state =
-          states[
-            scan.id
-          ] || {};
+  const response =
+    await env.BROWSER.quickAction(
+      "content",
+      {
+        url:
+          target,
 
-        if (
-          typeof price !== "number"
-        ) {
-          return (
-            `${scan.short} NS2：` +
-            `百亿补贴暂无匹配 ｜ ` +
-            `目标 ${money(scan.target)}`
-          );
-        }
+        /*
+         * 等动态请求基本结束
+         */
+        gotoOptions: {
+          waitUntil:
+            "networkidle2"
+        },
 
-        const hit =
-          price <= scan.target
-            ? " ✅"
-            : "";
-
-        const low =
-          typeof state.historicalLow === "number"
-            ? ` ｜ 历史低 ${money(state.historicalLow)}`
-            : "";
-
-        return (
-          `${scan.short} NS2：` +
-          `${money(price)} ｜ ` +
-          `目标 ${money(scan.target)}` +
-          `${hit}${low}`
-        );
+        userAgent:
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) " +
+          "AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1"
       }
     );
 
-  await bark(
-    env,
+  const html =
+    await response.text();
 
-    "☀️ 08:00 百亿补贴游戏晨报",
-
-    lines.join("\n")
-  );
-
-  await env.PRICE_STATE.put(
-    metaKey,
-    bj.date
-  );
-
-  return true;
-}
-
-async function runMonitor(
-  env,
-  scheduledDate
-) {
-  if (!env.PRICE_STATE) {
-    throw new Error(
-      "PRICE_STATE KV 未绑定"
-    );
-  }
-
-  const scans =
-    await scanAll(env);
-
-  const states =
-    await processPrices(
-      env,
-      scans
-    );
-
-  const morning =
-    await morningReport(
-      env,
-      scans,
-      states,
-      scheduledDate
+  const visible =
+    htmlToVisibleText(
+      html
     );
 
   return {
     ok: true,
-    scans,
-    states,
-    morning
+
+    query,
+
+    target,
+
+    browserMsUsed:
+      response.headers.get(
+        "X-Browser-Ms-Used"
+      ),
+
+    htmlLength:
+      html.length,
+
+    visibleTextLength:
+      visible.length,
+
+    signals: {
+      query:
+        visible.includes(
+          query
+        ),
+
+      百亿补贴:
+        visible.includes(
+          "百亿补贴"
+        ),
+
+      switch2:
+        /switch\s*2/i
+          .test(visible),
+
+      ns2:
+        /ns2/i
+          .test(visible),
+
+      captcha:
+        /验证码|captcha|验证访问/i
+          .test(visible),
+
+      risk:
+        /访问受限|异常访问|风险/i
+          .test(visible)
+    },
+
+    /*
+     * 优先看这些片段
+     */
+    queryContexts:
+      contexts(
+        visible,
+        query
+      ),
+
+    subsidyContexts:
+      contexts(
+        visible,
+        "百亿补贴"
+      ),
+
+    switchContexts: [
+      ...contexts(
+        visible,
+        "Switch2",
+        5
+      ),
+
+      ...contexts(
+        visible,
+        "NS2",
+        5
+      )
+    ].slice(0, 10),
+
+    /*
+     * 如果上面都空，
+     * 这个样本可以判断页面到底渲染了什么
+     */
+    visibleSample:
+      visible.slice(
+        0,
+        7000
+      )
   };
 }
 
+
 function json(
-  data,
+  value,
   status = 200
 ) {
   return new Response(
     JSON.stringify(
-      data,
+      value,
       null,
       2
     ),
@@ -860,100 +923,6 @@ function json(
   );
 }
 
-function homepage() {
-  return `
-<!doctype html>
-<html lang="zh-CN">
-
-<head>
-<meta charset="utf-8">
-<meta
-  name="viewport"
-  content="width=device-width,initial-scale=1"
->
-
-<title>
-游戏卡带价格雷达
-</title>
-
-<style>
-body {
-  font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-
-  background: #f6f7f9;
-  color: #111827;
-  margin: 0;
-  padding: 24px;
-}
-
-.card {
-  max-width: 680px;
-  margin: 60px auto;
-  background: white;
-  border: 1px solid #e5e7eb;
-  border-radius: 24px;
-  padding: 30px;
-}
-
-.badge {
-  display: inline-block;
-  background: #fff1f2;
-  color: #e11d48;
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-weight: 600;
-}
-
-.game {
-  margin-top: 14px;
-  padding: 16px;
-  background: #fafafa;
-  border-radius: 16px;
-}
-</style>
-
-</head>
-
-<body>
-
-<main class="card">
-
-<span class="badge">
-百亿补贴监控中
-</span>
-
-<h1>
-游戏卡带价格雷达
-</h1>
-
-<p>
-每10分钟检查百亿补贴商品；
-达到目标价立即 Bark；
-每天北京时间08:00发送晨报。
-</p>
-
-<div class="game">
-<strong>王国之泪 NS2</strong>
-<br>
-目标价 ≤ ¥280
-</div>
-
-<div class="game">
-<strong>空之轨迹 the 2nd NS2</strong>
-<br>
-目标价 ≤ ¥400
-</div>
-
-</main>
-
-</body>
-</html>
-`;
-}
 
 export default {
 
@@ -971,7 +940,18 @@ export default {
         url.pathname === "/"
       ) {
         return new Response(
-          homepage(),
+          `
+          <!doctype html>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>游戏价格雷达</title>
+          <body style="font-family:-apple-system;padding:30px;max-width:700px;margin:auto">
+            <h1>游戏价格雷达</h1>
+            <p>百亿补贴价格监控测试中。</p>
+            <p>王国之泪 NS2：≤ ¥280</p>
+            <p>空轨2nd NS2：≤ ¥400</p>
+          </body>
+          `,
           {
             headers: {
               "content-type":
@@ -988,24 +968,9 @@ export default {
         return json({
           ok: true,
 
-          pddClientId:
+          browser:
             Boolean(
-              env.PDD_CLIENT_ID
-            ),
-
-          pddClientSecret:
-            Boolean(
-              env.PDD_CLIENT_SECRET
-            ),
-
-          pddPid:
-            Boolean(
-              env.PDD_PID
-            ),
-
-          bark:
-            Boolean(
-              env.BARK_KEY
+              env.BROWSER
             ),
 
           kv:
@@ -1013,26 +978,19 @@ export default {
               env.PRICE_STATE
             ),
 
-          mode:
-            "百亿补贴",
-
-          beijingTime:
-            beijingTime(
-              new Date()
-            ).iso
+          bark:
+            Boolean(
+              env.BARK_KEY
+            )
         });
       }
 
-      // 手动测试，不发 Bark、不写 KV
       if (
         url.pathname ===
         "/scan"
       ) {
         return json({
           ok: true,
-
-          mode:
-            "百亿补贴",
 
           scans:
             await scanAll(
@@ -1041,12 +999,33 @@ export default {
         });
       }
 
+      /*
+       * 真浏览器消费者端测试
+       */
+      if (
+        url.pathname ===
+        "/browser-test"
+      ) {
+        const q =
+          (
+            url.searchParams
+              .get("q") ||
+            "王国之泪 Switch2"
+          ).trim();
+
+        return json(
+          await browserTest(
+            env,
+            q
+          )
+        );
+      }
+
       if (
         url.pathname ===
         "/status"
       ) {
-        const states =
-          {};
+        const states = {};
 
         for (
           const game
@@ -1055,16 +1034,11 @@ export default {
           states[
             game.id
           ] =
-            await readState(
+            await getState(
               env,
               game.id
             );
         }
-
-        states.lastDailyReportDate =
-          await env.PRICE_STATE.get(
-            "meta:lastDailyReportDate"
-          );
 
         return json({
           ok: true,
@@ -1079,16 +1053,14 @@ export default {
         }
       );
 
-    } catch (error) {
-
+    } catch (e) {
       return json(
         {
           ok: false,
 
           error:
             String(
-              error?.message ||
-              error
+              e?.message || e
             )
         },
         500
@@ -1103,20 +1075,15 @@ export default {
     ctx
   ) {
     ctx.waitUntil(
-      runMonitor(
+      monitor(
         env,
         new Date(
           event.scheduledTime
         )
       )
       .catch(
-        error => {
-          console.error(
-            "Monitor failed:",
-            error?.stack ||
-            error
-          );
-        }
+        e =>
+          console.error(e)
       )
     );
   }
