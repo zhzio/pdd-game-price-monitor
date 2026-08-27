@@ -13,7 +13,7 @@ async function md5Upper(text) {
 }
 
 
-async function createPddSign(params, secret) {
+async function createSign(params, secret) {
   const keys = Object.keys(params).sort();
 
   let source = secret;
@@ -28,35 +28,17 @@ async function createPddSign(params, secret) {
 }
 
 
-async function searchPdd(
-  keyword,
-  env,
-  billionOnly = false
-) {
+async function pddCall(env, extraParams) {
   if (!env.PDD_CLIENT_ID) {
-    throw new Error(
-      "未设置 PDD_CLIENT_ID"
-    );
+    throw new Error("未设置 PDD_CLIENT_ID");
   }
 
   if (!env.PDD_CLIENT_SECRET) {
-    throw new Error(
-      "未设置 PDD_CLIENT_SECRET"
-    );
+    throw new Error("未设置 PDD_CLIENT_SECRET");
   }
-
-  if (!env.PDD_PID) {
-    throw new Error(
-      "未设置 PDD_PID"
-    );
-  }
-
 
   const params = {
-    type: "pdd.ddk.goods.search",
-
-    client_id:
-      env.PDD_CLIENT_ID,
+    client_id: env.PDD_CLIENT_ID,
 
     timestamp:
       String(
@@ -67,26 +49,12 @@ async function searchPdd(
 
     version: "V1",
 
-    keyword,
-
-    pid:
-      env.PDD_PID,
-
-    page: "1",
-
-    page_size: "20"
+    ...extraParams
   };
 
 
-  // 百亿补贴筛选
-  if (billionOnly) {
-    params.activity_tags =
-      JSON.stringify([7]);
-  }
-
-
   params.sign =
-    await createPddSign(
+    await createSign(
       params,
       env.PDD_CLIENT_SECRET
     );
@@ -99,7 +67,7 @@ async function searchPdd(
     const [key, value]
     of Object.entries(params)
   ) {
-    body.set(key, value);
+    body.set(key, String(value));
   }
 
 
@@ -119,32 +87,66 @@ async function searchPdd(
   );
 
 
-  const rawText =
+  const text =
     await response.text();
 
 
-  let data;
-
   try {
-    data =
-      JSON.parse(rawText);
+    return JSON.parse(text);
   } catch {
     return {
-      ok: false,
+      error_response: {
+        error_msg:
+          "接口返回的不是 JSON",
 
-      stage:
-        "parse_response",
-
-      httpStatus:
-        response.status,
-
-      message:
-        "接口返回的不是 JSON",
-
-      sample:
-        rawText.slice(0, 1000)
+        raw:
+          text.slice(0, 1000)
+      }
     };
   }
+}
+
+
+async function searchPdd(
+  keyword,
+  env,
+  billionOnly = false
+) {
+  if (!env.PDD_PID) {
+    throw new Error(
+      "未设置 PDD_PID"
+    );
+  }
+
+
+  const params = {
+    type:
+      "pdd.ddk.goods.search",
+
+    keyword,
+
+    pid:
+      env.PDD_PID,
+
+    page:
+      "1",
+
+    page_size:
+      "20"
+  };
+
+
+  if (billionOnly) {
+    params.activity_tags =
+      JSON.stringify([7]);
+  }
+
+
+  const data =
+    await pddCall(
+      env,
+      params
+    );
 
 
   if (data.error_response) {
@@ -153,9 +155,6 @@ async function searchPdd(
 
       stage:
         "pdd_api",
-
-      httpStatus:
-        response.status,
 
       keyword,
 
@@ -172,7 +171,9 @@ async function searchPdd(
 
 
   const goods =
-    Array.isArray(result.goods_list)
+    Array.isArray(
+      result.goods_list
+    )
       ? result.goods_list
       : [];
 
@@ -181,60 +182,49 @@ async function searchPdd(
     goods.map((g) => {
 
       const price =
-        typeof g.min_group_price === "number"
+        typeof g.min_group_price ===
+        "number"
           ? g.min_group_price / 100
           : null;
 
 
-      const normalPrice =
-        typeof g.min_normal_price === "number"
-          ? g.min_normal_price / 100
-          : null;
-
-
-      const couponDiscount =
-        typeof g.coupon_discount === "number"
+      const coupon =
+        typeof g.coupon_discount ===
+        "number"
           ? g.coupon_discount / 100
           : 0;
-
-
-      const afterCouponPrice =
-        price !== null
-          ? Math.max(
-              0,
-              price - couponDiscount
-            )
-          : null;
 
 
       return {
         goodsName:
           g.goods_name || null,
 
-        goodsSign:
-          g.goods_sign || null,
-
         mallName:
           g.mall_name || null,
 
+        goodsSign:
+          g.goods_sign || null,
+
         price,
 
-        normalPrice,
+        couponDiscount:
+          coupon,
 
-        hasCoupon:
-          Boolean(g.has_coupon),
+        afterCouponPrice:
+          price !== null
+            ? Math.max(
+                0,
+                price - coupon
+              )
+            : null,
 
-        couponDiscount,
-
-        afterCouponPrice,
+        activityTags:
+          g.activity_tags || [],
 
         sales:
           g.sales_tip ??
           g.sold_quantity ??
           null,
-
-        activityTags:
-          g.activity_tags || [],
 
         image:
           g.goods_thumbnail_url ||
@@ -244,22 +234,18 @@ async function searchPdd(
     });
 
 
-  // 默认按照实际可能支付价格从低到高
   simplified.sort(
-    (a, b) => {
-
-      const aPrice =
+    (a, b) =>
+      (
         a.afterCouponPrice ??
         a.price ??
-        Infinity;
-
-      const bPrice =
+        Infinity
+      ) -
+      (
         b.afterCouponPrice ??
         b.price ??
-        Infinity;
-
-      return aPrice - bPrice;
-    }
+        Infinity
+      )
   );
 
 
@@ -273,15 +259,12 @@ async function searchPdd(
 
     billionOnly,
 
-    total:
-      result.total_count ??
-      simplified.length,
-
     count:
       simplified.length,
 
-    listId:
-      result.list_id || null,
+    total:
+      result.total_count ??
+      simplified.length,
 
     goods:
       simplified
@@ -289,14 +272,132 @@ async function searchPdd(
 }
 
 
+async function createBindUrl(env) {
+  if (!env.PDD_PID) {
+    throw new Error(
+      "未设置 PDD_PID"
+    );
+  }
+
+
+  const data =
+    await pddCall(
+      env,
+      {
+        type:
+          "pdd.ddk.rp.prom.url.generate",
+
+        channel_type:
+          "10",
+
+        p_id_list:
+          JSON.stringify([
+            env.PDD_PID
+          ])
+      }
+    );
+
+
+  if (data.error_response) {
+    return {
+      ok: false,
+
+      error:
+        data.error_response
+    };
+  }
+
+
+  const result =
+    data
+      .rp_promotion_url_generate_response ||
+    {};
+
+
+  const item =
+    Array.isArray(
+      result.url_list
+    )
+      ? result.url_list[0]
+      : null;
+
+
+  return {
+    ok: true,
+
+    message:
+      "打开 bindUrl 完成拼多多授权备案",
+
+    bindUrl:
+      item?.mobile_url ||
+      item?.url ||
+      null,
+
+    urlList:
+      result.url_list || []
+  };
+}
+
+
+async function checkAuthority(env) {
+  if (!env.PDD_PID) {
+    throw new Error(
+      "未设置 PDD_PID"
+    );
+  }
+
+
+  const data =
+    await pddCall(
+      env,
+      {
+        type:
+          "pdd.ddk.member.authority.query",
+
+        pid:
+          env.PDD_PID
+      }
+    );
+
+
+  if (data.error_response) {
+    return {
+      ok: false,
+
+      error:
+        data.error_response
+    };
+  }
+
+
+  const result =
+    data.authority_query_response ||
+    {};
+
+
+  return {
+    ok: true,
+
+    bind:
+      result.bind ?? null,
+
+    registered:
+      Number(
+        result.bind
+      ) === 1
+  };
+}
+
+
 function homepage() {
   return `
-<!DOCTYPE html>
+<!doctype html>
+
 <html lang="zh-CN">
 
 <head>
 
-<meta charset="UTF-8">
+<meta charset="utf-8">
 
 <meta
   name="viewport"
@@ -309,18 +410,8 @@ function homepage() {
 
 <style>
 
-* {
-  box-sizing: border-box;
-}
-
 body {
   margin: 0;
-  min-height: 100vh;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
   padding: 24px;
 
   font-family:
@@ -329,116 +420,97 @@ body {
     "Segoe UI",
     sans-serif;
 
-  background: #f5f6f8;
-  color: #111827;
+  background:
+    #f5f6f8;
+
+  color:
+    #111827;
 }
 
 .card {
-  width: 100%;
-  max-width: 680px;
+  max-width:
+    650px;
 
-  background: white;
+  margin:
+    60px auto;
 
-  border: 1px solid #e5e7eb;
-  border-radius: 24px;
+  background:
+    white;
 
-  padding: 32px;
+  padding:
+    30px;
+
+  border-radius:
+    22px;
 
   box-shadow:
-    0 16px 40px
-    rgba(0,0,0,.06);
+    0 12px 36px
+    rgba(0,0,0,.07);
 }
 
 .badge {
-  display: inline-block;
+  display:
+    inline-block;
 
-  padding: 6px 12px;
+  background:
+    #eef6ff;
 
-  border-radius: 999px;
+  color:
+    #2563eb;
 
-  background: #eef6ff;
-  color: #2563eb;
+  padding:
+    6px 12px;
 
-  font-size: 14px;
-  font-weight: 600;
+  border-radius:
+    999px;
+
+  font-size:
+    14px;
 }
 
 h1 {
-  margin: 18px 0 12px;
-  font-size: 32px;
+  font-size:
+    30px;
+
+  margin:
+    18px 0 12px;
 }
 
-.description {
-  color: #4b5563;
-  line-height: 1.8;
-}
+p {
+  color:
+    #4b5563;
 
-.grid {
-  display: grid;
-
-  grid-template-columns:
-    repeat(3, 1fr);
-
-  gap: 12px;
-
-  margin-top: 26px;
-}
-
-.item {
-  padding: 16px;
-
-  border-radius: 16px;
-
-  background: #f9fafb;
-  border: 1px solid #edf0f3;
-}
-
-.item strong {
-  display: block;
-  margin-bottom: 7px;
-}
-
-.item span {
-  color: #6b7280;
-  font-size: 13px;
-  line-height: 1.5;
+  line-height:
+    1.8;
 }
 
 footer {
-  margin-top: 26px;
-  padding-top: 18px;
+  margin-top:
+    24px;
+
+  padding-top:
+    18px;
 
   border-top:
-    1px solid #edf0f3;
+    1px solid #eee;
 
-  color: #9ca3af;
-  font-size: 12px;
-  line-height: 1.7;
-}
+  font-size:
+    12px;
 
-@media(max-width:600px) {
+  color:
+    #9ca3af;
 
-  .card {
-    padding: 24px 20px;
-  }
-
-  h1 {
-    font-size: 27px;
-  }
-
-  .grid {
-    grid-template-columns: 1fr;
-  }
+  line-height:
+    1.7;
 }
 
 </style>
 
 </head>
 
-
 <body>
 
-<main class="card">
+<div class="card">
 
 <span class="badge">
 开发测试中
@@ -448,73 +520,22 @@ footer {
 游戏卡带价格雷达
 </h1>
 
-<div class="description">
+<p>
+用于查询公开游戏实体商品信息与价格变化，
+辅助进行价格比较和购买决策。
+</p>
 
-用于查询和观察公开游戏实体商品价格变化，
-为购买决策提供参考。
-
-<br><br>
-
-价格及商品状态以对应平台实际展示为准。
-
-</div>
-
-
-<div class="grid">
-
-<div class="item">
-
-<strong>
-价格查询
-</strong>
-
-<span>
-查询公开商品与价格信息
-</span>
-
-</div>
-
-
-<div class="item">
-
-<strong>
-低价排序
-</strong>
-
-<span>
-辅助寻找更低价格商品
-</span>
-
-</div>
-
-
-<div class="item">
-
-<strong>
-价格提醒
-</strong>
-
-<span>
-仅提供提醒，不自动下单
-</span>
-
-</div>
-
-</div>
-
+<p>
+本工具仅提供商品与价格信息，
+不提供自动下单或支付服务。
+</p>
 
 <footer>
-
 独立开发测试项目，
 与任何电商平台不存在官方隶属关系。
-
-<br>
-
-不提供自动购买、自动下单或支付服务。
-
 </footer>
 
-</main>
+</div>
 
 </body>
 
@@ -530,15 +551,13 @@ export default {
     try {
 
       const url =
-        new URL(request.url);
+        new URL(
+          request.url
+        );
 
 
-      /*
-       * 首页
-       */
       if (
-        url.pathname === "/" ||
-        url.pathname === ""
+        url.pathname === "/"
       ) {
 
         return new Response(
@@ -553,82 +572,82 @@ export default {
       }
 
 
-      /*
-       * 配置检查
-       */
       if (
-        url.pathname === "/health"
+        url.pathname ===
+        "/health"
       ) {
 
         return Response.json({
           ok: true,
 
-          service:
-            "game-price-radar",
-
-          pddClientIdConfigured:
+          pddClientId:
             Boolean(
               env.PDD_CLIENT_ID
             ),
 
-          pddClientSecretConfigured:
+          pddClientSecret:
             Boolean(
               env.PDD_CLIENT_SECRET
             ),
 
-          pddPidConfigured:
+          pddPid:
             Boolean(
               env.PDD_PID
-            ),
-
-          time:
-            new Date().toISOString()
+            )
         });
       }
 
 
-      /*
-       * 商品搜索
-       *
-       * 示例：
-       *
-       * /api?q=塞尔达传说王国之泪
-       *
-       * 百亿补贴：
-       *
-       * /api?q=塞尔达传说王国之泪&billion=1
-       */
       if (
-        url.pathname === "/api"
+        url.pathname ===
+        "/bind"
+      ) {
+
+        const result =
+          await createBindUrl(
+            env
+          );
+
+        return Response.json(
+          result
+        );
+      }
+
+
+      if (
+        url.pathname ===
+        "/authority"
+      ) {
+
+        const result =
+          await checkAuthority(
+            env
+          );
+
+        return Response.json(
+          result
+        );
+      }
+
+
+      if (
+        url.pathname ===
+        "/api"
       ) {
 
         const keyword =
           (
-            url.searchParams.get("q") ||
+            url.searchParams
+              .get("q") ||
 
-            "塞尔达传说 王国之泪 Switch 卡带"
+            "塞尔达传说 王国之泪"
           ).trim();
 
 
         const billionOnly =
           url.searchParams
-            .get("billion") === "1";
-
-
-        if (!keyword) {
-
-          return Response.json(
-            {
-              ok: false,
-
-              error:
-                "请输入搜索关键词"
-            },
-            {
-              status: 400
-            }
-          );
-        }
+            .get("billion") ===
+          "1";
 
 
         const result =
@@ -639,18 +658,10 @@ export default {
           );
 
 
-        return new Response(
-          JSON.stringify(
-            result,
-            null,
-            2
-          ),
+        return Response.json(
+          result,
           {
             headers: {
-
-              "content-type":
-                "application/json;charset=UTF-8",
-
               "cache-control":
                 "no-store"
             }
@@ -669,31 +680,18 @@ export default {
 
     } catch (error) {
 
-      return new Response(
-        JSON.stringify(
-          {
-            ok: false,
-
-            error:
-              String(
-                error?.message ||
-                error
-              )
-          },
-          null,
-          2
-        ),
+      return Response.json(
         {
-          status: 500,
+          ok: false,
 
-          headers: {
-
-            "content-type":
-              "application/json;charset=UTF-8",
-
-            "cache-control":
-              "no-store"
-          }
+          error:
+            String(
+              error?.message ||
+              error
+            )
+        },
+        {
+          status: 500
         }
       );
     }
