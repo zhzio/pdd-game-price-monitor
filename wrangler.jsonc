@@ -1,5 +1,19 @@
 {
   "name": "pdd-game-price-monitor",
   "main": "worker.js",
-  "compatibility_date": "2026-08-27"
+  "compatibility_date": "2026-08-27",
+
+  "keep_vars": true,
+
+  "triggers": {
+    "crons": [
+      "*/10 * * * *"
+    ]
+  },
+
+  "kv_namespaces": [
+    {
+      "binding": "PRICE_STATE"
+    }
+  ]
 }
