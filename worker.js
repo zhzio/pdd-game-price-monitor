@@ -1,302 +1,788 @@
-function contexts(text, keyword, max = 3) {
-  const out = [];
-  let start = 0;
+async function md5Upper(text) {
+  const bytes = new TextEncoder().encode(text);
 
-  while (out.length < max) {
-    const i = text.indexOf(keyword, start);
-    if (i === -1) break;
+  const hash = await crypto.subtle.digest(
+    "MD5",
+    bytes
+  );
 
-    out.push(
-      text.slice(
-        Math.max(0, i - 180),
-        Math.min(text.length, i + 420)
-      )
-    );
-
-    start = i + keyword.length;
-  }
-
-  return out;
+  return [...new Uint8Array(hash)]
+    .map((b) =>
+      b.toString(16).padStart(2, "0")
+    )
+    .join("")
+    .toUpperCase();
 }
 
-async function probePdd(keyword) {
-  const url =
-    "https://mobile.yangkeduo.com/search_result.html" +
-    `?search_key=${encodeURIComponent(keyword)}` +
-    "&search_type=goods&source=index";
 
-  const r = await fetch(url, {
-    redirect: "follow",
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) " +
-        "AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1",
-      "Accept":
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "zh-CN,zh;q=0.9"
-    }
-  });
+async function createPddSign(params, secret) {
+  const keys = Object.keys(params).sort();
 
-  const text = await r.text();
-
-  const keys = [
-    "goods_id",
-    "goodsId",
-    "goods_name",
-    "goodsName",
-    "min_group_price",
-    "group_price",
-    "normal_price",
-    "price",
-    "百亿补贴"
-  ];
-
-  const markers = {};
+  let source = secret;
 
   for (const key of keys) {
-    markers[key] = {
-      count: text.split(key).length - 1,
-      samples: contexts(text, key)
+    source += key + params[key];
+  }
+
+  source += secret;
+
+  return await md5Upper(source);
+}
+
+
+async function searchPdd(keyword, env, billionOnly = false) {
+  if (!env.PDD_CLIENT_ID) {
+    throw new Error(
+      "Cloudflare 未设置 PDD_CLIENT_ID"
+    );
+  }
+
+  if (!env.PDD_CLIENT_SECRET) {
+    throw new Error(
+      "Cloudflare 未设置 PDD_CLIENT_SECRET"
+    );
+  }
+
+  const params = {
+    type: "pdd.ddk.goods.search",
+
+    client_id:
+      env.PDD_CLIENT_ID,
+
+    timestamp:
+      String(
+        Math.floor(Date.now() / 1000)
+      ),
+
+    data_type: "JSON",
+
+    version: "V1",
+
+    keyword,
+
+    page: "1",
+
+    page_size: "20"
+  };
+
+
+  // 7 = 百亿补贴
+  if (billionOnly) {
+    params.activity_tags =
+      JSON.stringify([7]);
+  }
+
+
+  params.sign =
+    await createPddSign(
+      params,
+      env.PDD_CLIENT_SECRET
+    );
+
+
+  const body =
+    new URLSearchParams();
+
+  for (
+    const [key, value]
+    of Object.entries(params)
+  ) {
+    body.set(key, value);
+  }
+
+
+  const response = await fetch(
+    "https://gw-api.pinduoduo.com/api/router",
+    {
+      method: "POST",
+
+      headers: {
+        "content-type":
+          "application/x-www-form-urlencoded;charset=UTF-8"
+      },
+
+      body:
+        body.toString()
+    }
+  );
+
+
+  const rawText =
+    await response.text();
+
+
+  let data;
+
+  try {
+    data =
+      JSON.parse(rawText);
+  } catch {
+    return {
+      ok: false,
+
+      stage:
+        "parse_response",
+
+      httpStatus:
+        response.status,
+
+      message:
+        "拼多多返回的不是 JSON",
+
+      sample:
+        rawText.slice(0, 1000)
     };
   }
 
-  const goodsIdMatches = [
-    ...text.matchAll(
-      /(?:\"goods_id\"\s*:\s*\"?(\d+)|goods_id=(\d+)|\"goodsId\"\s*:\s*\"?(\d+))/g
-    )
-  ];
 
-  const goodsIds = [
-    ...new Set(
-      goodsIdMatches
-        .map((m) => m[1] || m[2] || m[3])
-        .filter(Boolean)
-    )
-  ].slice(0, 30);
+  if (data.error_response) {
+    return {
+      ok: false,
+
+      stage:
+        "pdd_api",
+
+      httpStatus:
+        response.status,
+
+      keyword,
+
+      billionOnly,
+
+      error:
+        data.error_response
+    };
+  }
+
+
+  const result =
+    data.goods_search_response || {};
+
+
+  const goods =
+    Array.isArray(result.goods_list)
+      ? result.goods_list
+      : [];
+
+
+  const simplified =
+    goods.map((g) => {
+
+      const groupPrice =
+        typeof g.min_group_price === "number"
+          ? g.min_group_price / 100
+          : null;
+
+
+      const normalPrice =
+        typeof g.min_normal_price === "number"
+          ? g.min_normal_price / 100
+          : null;
+
+
+      const couponDiscount =
+        typeof g.coupon_discount === "number"
+          ? g.coupon_discount / 100
+          : 0;
+
+
+      let afterCouponPrice =
+        null;
+
+
+      if (groupPrice !== null) {
+        afterCouponPrice =
+          Math.max(
+            0,
+            groupPrice -
+            couponDiscount
+          );
+      }
+
+
+      return {
+        goodsName:
+          g.goods_name || null,
+
+        goodsSign:
+          g.goods_sign || null,
+
+        mallName:
+          g.mall_name || null,
+
+        price:
+          groupPrice,
+
+        normalPrice,
+
+        hasCoupon:
+          Boolean(g.has_coupon),
+
+        couponDiscount,
+
+        afterCouponPrice,
+
+        sales:
+          g.sales_tip ??
+          g.sold_quantity ??
+          null,
+
+        activityTags:
+          g.activity_tags || [],
+
+        image:
+          g.goods_thumbnail_url ||
+          g.goods_image_url ||
+          null,
+
+        description:
+          g.goods_desc || null
+      };
+    });
+
+
+  simplified.sort(
+    (a, b) => {
+
+      const pa =
+        a.afterCouponPrice ??
+        a.price ??
+        Infinity;
+
+      const pb =
+        b.afterCouponPrice ??
+        b.price ??
+        Infinity;
+
+      return pa - pb;
+    }
+  );
+
 
   return {
+    ok: true,
+
+    source:
+      "pdd.ddk.goods.search",
+
     keyword,
-    response: {
-      status: r.status,
-      ok: r.ok,
-      finalUrl: r.url,
-      htmlLength: text.length
-    },
-    content: {
-      containsKeyword: text.includes(keyword),
-      goodsIdCount: goodsIdMatches.length,
-      goodsIds
-    },
-    challengeHints: {
-      captcha: /验证码|captcha|verify/i.test(text),
-      login: /登录|login/i.test(text),
-      risk: /访问受限|风险|异常|forbidden|anti.?bot/i.test(text)
-    },
-    markers,
-    sample: text.slice(0, 3000)
+
+    billionOnly,
+
+    total:
+      result.total_count ??
+      simplified.length,
+
+    count:
+      simplified.length,
+
+    listId:
+      result.list_id || null,
+
+    goods:
+      simplified
   };
 }
 
+
 function homepage() {
   return `<!doctype html>
+
 <html lang="zh-CN">
+
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>游戏卡带价格雷达</title>
-  <style>
-    * { box-sizing: border-box; }
 
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f6f7f9;
-      color: #111827;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-    }
+<meta charset="utf-8">
 
-    .card {
-      width: min(680px, 100%);
-      background: #fff;
-      border: 1px solid #e5e7eb;
-      border-radius: 24px;
-      padding: 34px;
-      box-shadow: 0 14px 40px rgba(0,0,0,.06);
-    }
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
 
-    .badge {
-      display: inline-block;
-      padding: 7px 12px;
-      border-radius: 999px;
-      background: #eef6ff;
-      color: #2563eb;
-      font-size: 14px;
-      font-weight: 600;
-    }
+<title>
+游戏卡带价格雷达
+</title>
 
-    h1 {
-      margin: 18px 0 12px;
-      font-size: 34px;
-      line-height: 1.2;
-    }
 
-    p {
-      margin: 0;
-      color: #4b5563;
-      font-size: 16px;
-      line-height: 1.8;
-    }
+<style>
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      margin-top: 26px;
-    }
+* {
+  box-sizing: border-box;
+}
 
-    .item {
-      padding: 16px;
-      border-radius: 16px;
-      background: #f9fafb;
-      border: 1px solid #eef0f3;
-    }
 
-    .item strong {
-      display: block;
-      margin-bottom: 6px;
-      font-size: 15px;
-    }
+body {
+  margin: 0;
+  min-height: 100vh;
 
-    .item span {
-      color: #6b7280;
-      font-size: 13px;
-      line-height: 1.5;
-    }
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 
-    footer {
-      margin-top: 26px;
-      padding-top: 18px;
-      border-top: 1px solid #eef0f3;
-      color: #9ca3af;
-      font-size: 12px;
-      line-height: 1.6;
-    }
+  background:
+    #f6f7f9;
 
-    @media (max-width: 600px) {
-      .card {
-        padding: 26px 22px;
-        border-radius: 20px;
-      }
+  color:
+    #111827;
 
-      h1 {
-        font-size: 28px;
-      }
+  display: flex;
 
-      .grid {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+  justify-content:
+    center;
+
+  align-items:
+    center;
+
+  padding:
+    24px;
+}
+
+
+.card {
+  width:
+    min(
+      680px,
+      100%
+    );
+
+  background:
+    white;
+
+  border:
+    1px solid #e5e7eb;
+
+  border-radius:
+    24px;
+
+  padding:
+    34px;
+
+  box-shadow:
+    0 14px 40px
+    rgba(
+      0,
+      0,
+      0,
+      .06
+    );
+}
+
+
+.badge {
+  display:
+    inline-block;
+
+  padding:
+    7px 12px;
+
+  border-radius:
+    999px;
+
+  background:
+    #eef6ff;
+
+  color:
+    #2563eb;
+
+  font-size:
+    14px;
+
+  font-weight:
+    600;
+}
+
+
+h1 {
+  margin:
+    18px 0 12px;
+
+  font-size:
+    34px;
+
+  line-height:
+    1.2;
+}
+
+
+p {
+  margin: 0;
+
+  color:
+    #4b5563;
+
+  font-size:
+    16px;
+
+  line-height:
+    1.8;
+}
+
+
+.grid {
+  display:
+    grid;
+
+  grid-template-columns:
+    repeat(
+      3,
+      1fr
+    );
+
+  gap:
+    12px;
+
+  margin-top:
+    26px;
+}
+
+
+.item {
+  padding:
+    16px;
+
+  border-radius:
+    16px;
+
+  background:
+    #f9fafb;
+
+  border:
+    1px solid #eef0f3;
+}
+
+
+.item strong {
+  display:
+    block;
+
+  margin-bottom:
+    6px;
+
+  font-size:
+    15px;
+}
+
+
+.item span {
+  color:
+    #6b7280;
+
+  font-size:
+    13px;
+
+  line-height:
+    1.5;
+}
+
+
+footer {
+  margin-top:
+    26px;
+
+  padding-top:
+    18px;
+
+  border-top:
+    1px solid #eef0f3;
+
+  color:
+    #9ca3af;
+
+  font-size:
+    12px;
+
+  line-height:
+    1.6;
+}
+
+
+@media (
+  max-width: 600px
+) {
+
+  .card {
+    padding:
+      26px 22px;
+
+    border-radius:
+      20px;
+  }
+
+
+  h1 {
+    font-size:
+      28px;
+  }
+
+
+  .grid {
+    grid-template-columns:
+      1fr;
+  }
+
+}
+
+</style>
+
 </head>
+
+
 <body>
-  <main class="card">
-    <span class="badge">开发测试中</span>
 
-    <h1>游戏卡带价格雷达</h1>
+<main class="card">
 
-    <p>
-      用于查询和观察公开游戏实体商品的价格变化，
-      为购买决策提供参考。当前项目处于开发测试阶段，
-      价格与商品状态以对应平台实际展示为准。
-    </p>
+<span class="badge">
+开发测试中
+</span>
 
-    <section class="grid">
-      <div class="item">
-        <strong>价格查询</strong>
-        <span>检索公开商品信息与价格。</span>
-      </div>
 
-      <div class="item">
-        <strong>价格变化</strong>
-        <span>记录并观察价格波动趋势。</span>
-      </div>
+<h1>
+游戏卡带价格雷达
+</h1>
 
-      <div class="item">
-        <strong>购买提醒</strong>
-        <span>仅提供信息提醒，不提供自动下单。</span>
-      </div>
-    </section>
 
-    <footer>
-      本工具为独立开发测试项目，与任何电商平台不存在官方隶属关系。
-      不提供自动购买、自动下单或支付服务。
-    </footer>
-  </main>
+<p>
+用于查询和观察公开游戏实体商品的价格变化，
+为购买决策提供参考。
+当前项目处于开发测试阶段，
+价格与商品状态以对应平台实际展示为准。
+</p>
+
+
+<section class="grid">
+
+<div class="item">
+
+<strong>
+价格查询
+</strong>
+
+<span>
+检索公开商品信息与价格。
+</span>
+
+</div>
+
+
+<div class="item">
+
+<strong>
+价格变化
+</strong>
+
+<span>
+记录并观察价格波动趋势。
+</span>
+
+</div>
+
+
+<div class="item">
+
+<strong>
+购买提醒
+</strong>
+
+<span>
+仅提供信息提醒，
+不提供自动下单。
+</span>
+
+</div>
+
+</section>
+
+
+<footer>
+
+本工具为独立开发测试项目，
+与任何电商平台不存在官方隶属关系。
+
+<br>
+
+不提供自动购买、
+自动下单或支付服务。
+
+</footer>
+
+</main>
+
 </body>
+
 </html>`;
 }
 
+
 export default {
-  async fetch(request) {
+
+  async fetch(request, env) {
+
     try {
-      const u = new URL(request.url);
 
-      if (u.pathname === "/" || u.pathname === "") {
-        return new Response(homepage(), {
-          headers: {
-            "content-type": "text/html;charset=UTF-8"
-          }
-        });
-      }
+      const url =
+        new URL(
+          request.url
+        );
 
-      if (u.pathname === "/health") {
-        return Response.json({
-          ok: true,
-          service: "game-price-radar"
-        });
-      }
 
-      if (u.pathname === "/api") {
-        const keyword = (
-          u.searchParams.get("q") ||
-          "塞尔达传说 王国之泪 Switch 卡带"
-        ).trim();
-
-        const result = await probePdd(keyword);
+      /*
+       * 首页
+       */
+      if (
+        url.pathname === "/" ||
+        url.pathname === ""
+      ) {
 
         return new Response(
-          JSON.stringify(result, null, 2),
+          homepage(),
           {
             headers: {
               "content-type":
-                "application/json;charset=UTF-8"
+                "text/html;charset=UTF-8"
             }
           }
         );
       }
 
-      return new Response("Not Found", {
-        status: 404
-      });
 
-    } catch (e) {
+      /*
+       * 健康检查
+       */
+      if (
+        url.pathname ===
+        "/health"
+      ) {
+
+        return Response.json({
+          ok: true,
+
+          service:
+            "game-price-radar",
+
+          pddClientIdConfigured:
+            Boolean(
+              env.PDD_CLIENT_ID
+            ),
+
+          pddClientSecretConfigured:
+            Boolean(
+              env.PDD_CLIENT_SECRET
+            ),
+
+          time:
+            new Date()
+              .toISOString()
+        });
+      }
+
+
+      /*
+       * 拼多多商品搜索 API
+       *
+       * /api?q=塞尔达传说
+       *
+       * 百亿补贴：
+       *
+       * /api?q=塞尔达传说&billion=1
+       */
+      if (
+        url.pathname ===
+        "/api"
+      ) {
+
+        const keyword =
+          (
+            url.searchParams
+              .get("q") ||
+
+            "塞尔达传说 王国之泪 Switch 卡带"
+          ).trim();
+
+
+        const billionOnly =
+          url.searchParams
+            .get("billion") ===
+          "1";
+
+
+        if (!keyword) {
+
+          return Response.json(
+            {
+              ok: false,
+
+              error:
+                "请输入搜索关键词"
+            },
+            {
+              status: 400
+            }
+          );
+        }
+
+
+        const result =
+          await searchPdd(
+            keyword,
+            env,
+            billionOnly
+          );
+
+
+        return new Response(
+          JSON.stringify(
+            result,
+            null,
+            2
+          ),
+          {
+            headers: {
+              "content-type":
+                "application/json;charset=UTF-8",
+
+              "cache-control":
+                "no-store"
+            }
+          }
+        );
+      }
+
+
+      return new Response(
+        "Not Found",
+        {
+          status: 404
+        }
+      );
+
+
+    } catch (error) {
+
       return new Response(
         JSON.stringify(
           {
-            error: String(e.message || e)
+            ok: false,
+
+            error:
+              String(
+                error?.message ||
+                error
+              )
           },
           null,
           2
         ),
         {
           status: 500,
+
           headers: {
             "content-type":
-              "application/json;charset=UTF-8"
+              "application/json;charset=UTF-8",
+
+            "cache-control":
+              "no-store"
           }
         }
       );
