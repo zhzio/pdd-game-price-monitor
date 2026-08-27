@@ -5,20 +5,21 @@ const GAMES = [
     short: "王国之泪",
     version: "NS2",
     target: 280,
-    minPrice: 80,
+
     queries: [
       "塞尔达传说 王国之泪 Switch2",
       "王国之泪 NS2",
-      "王国之泪 Switch 2 Edition"
+      "王国之泪 Switch 2"
     ]
   },
+
   {
     id: "kiseki-2nd-ns2",
     name: "空之轨迹 the 2nd",
     short: "空轨2nd",
     version: "NS2",
     target: 400,
-    minPrice: 80,
+
     queries: [
       "空之轨迹 the 2nd Switch2",
       "空轨2nd NS2",
@@ -27,26 +28,17 @@ const GAMES = [
   }
 ];
 
-const EXCLUDE = [
-  "手机", "手游", "steam", "pc版", "电脑版",
-  "安卓", "android", "苹果", "ios",
-  "cdkey", "激活码", "兑换码", "序列号",
-  "数字版", "下载版", "下载码",
-  "账号", "帐号", "租号", "共享", "离线",
-  "amiibo", "钥匙扣", "挂件", "周边",
-  "手办", "玩偶", "模型", "徽章",
-  "贴纸", "保护壳", "保护套", "收纳",
-  "卡盒", "攻略", "海报", "主题",
-  "升级包", "升级通行证", "dlc",
-  "代充", "会员", "点卡"
-];
 
 function norm(v = "") {
   return String(v)
     .toLowerCase()
     .replace(/[　\s]+/g, "")
-    .replace(/[·•・:：\-—_()（）【】[\]\/\\]/g, "");
+    .replace(
+      /[·•・:：\-—_()（）【】[\]\/\\]/g,
+      ""
+    );
 }
+
 
 function isNS2(title) {
   const t = norm(title);
@@ -60,6 +52,7 @@ function isNS2(title) {
   );
 }
 
+
 function matchesGame(game, title) {
   const t = norm(title);
 
@@ -69,6 +62,7 @@ function matchesGame(game, title) {
       t.includes("王國之淚")
     );
   }
+
 
   if (game.id === "kiseki-2nd-ns2") {
     const hasName =
@@ -81,43 +75,58 @@ function matchesGame(game, title) {
       t.includes("2nd") ||
       t.includes("第二部") ||
       t.includes("空之轨迹2") ||
-      t.includes("空轨2");
+      t.includes("空之軌跡2") ||
+      t.includes("空轨2") ||
+      t.includes("空軌2");
 
-    return hasName && has2nd;
+    return (
+      hasName &&
+      has2nd
+    );
   }
+
 
   return false;
 }
 
-function isExcluded(title) {
-  const t = norm(title);
 
-  return EXCLUDE.some(
-    word => t.includes(norm(word))
-  );
-}
-
-function eligible(game, item) {
-  const title = item.goodsName || "";
+function eligible(
+  game,
+  item
+) {
+  const title =
+    item.goodsName || "";
 
   const price =
     item.afterCouponPrice ??
     item.price;
 
-  if (!matchesGame(game, title)) return false;
-  if (!isNS2(title)) return false;
-  if (isExcluded(title)) return false;
 
   if (
-    typeof price !== "number" ||
-    !Number.isFinite(price)
+    !matchesGame(
+      game,
+      title
+    )
   ) {
     return false;
   }
 
-  if (price < game.minPrice) {
+
+  if (
+    !isNS2(title)
+  ) {
     return false;
   }
+
+
+  if (
+    typeof price !== "number" ||
+    !Number.isFinite(price) ||
+    price <= 0
+  ) {
+    return false;
+  }
+
 
   return true;
 }
@@ -125,7 +134,8 @@ function eligible(game, item) {
 
 async function md5Upper(text) {
   const bytes =
-    new TextEncoder().encode(text);
+    new TextEncoder()
+      .encode(text);
 
   const hash =
     await crypto.subtle.digest(
@@ -133,10 +143,13 @@ async function md5Upper(text) {
       bytes
     );
 
-  return [...new Uint8Array(hash)]
+  return [
+    ...new Uint8Array(hash)
+  ]
     .map(
       b =>
-        b.toString(16)
+        b
+          .toString(16)
           .padStart(2, "0")
     )
     .join("")
@@ -144,40 +157,68 @@ async function md5Upper(text) {
 }
 
 
-async function sign(params, secret) {
+async function sign(
+  params,
+  secret
+) {
   const keys =
-    Object.keys(params).sort();
+    Object.keys(params)
+      .sort();
 
-  let source = secret;
+  let source =
+    secret;
 
-  for (const key of keys) {
-    source += key + params[key];
+
+  for (
+    const key
+    of keys
+  ) {
+    source +=
+      key +
+      params[key];
   }
 
-  source += secret;
 
-  return md5Upper(source);
+  source +=
+    secret;
+
+
+  return md5Upper(
+    source
+  );
 }
 
 
-async function pddCall(env, extra) {
-  if (!env.PDD_CLIENT_ID) {
+async function pddCall(
+  env,
+  extra
+) {
+  if (
+    !env.PDD_CLIENT_ID
+  ) {
     throw new Error(
       "未设置 PDD_CLIENT_ID"
     );
   }
 
-  if (!env.PDD_CLIENT_SECRET) {
+
+  if (
+    !env.PDD_CLIENT_SECRET
+  ) {
     throw new Error(
       "未设置 PDD_CLIENT_SECRET"
     );
   }
 
-  if (!env.PDD_PID) {
+
+  if (
+    !env.PDD_PID
+  ) {
     throw new Error(
       "未设置 PDD_PID"
     );
   }
+
 
   const params = {
     client_id:
@@ -185,7 +226,9 @@ async function pddCall(env, extra) {
 
     timestamp:
       String(
-        Math.floor(Date.now() / 1000)
+        Math.floor(
+          Date.now() / 1000
+        )
       ),
 
     data_type:
@@ -197,27 +240,35 @@ async function pddCall(env, extra) {
     ...extra
   };
 
+
   params.sign =
     await sign(
       params,
       env.PDD_CLIENT_SECRET
     );
 
+
   const body =
     new URLSearchParams();
 
+
   for (
-    const [k, v]
+    const [key, value]
     of Object.entries(params)
   ) {
-    body.set(k, String(v));
+    body.set(
+      key,
+      String(value)
+    );
   }
+
 
   const response =
     await fetch(
       "https://gw-api.pinduoduo.com/api/router",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           "content-type":
@@ -229,29 +280,34 @@ async function pddCall(env, extra) {
       }
     );
 
-  /*
-   * 强制 UTF-8 解码，
-   * 修复之前中文乱码问题
-   */
+
   const buffer =
-    await response.arrayBuffer();
+    await response
+      .arrayBuffer();
+
 
   const text =
-    new TextDecoder("utf-8")
-      .decode(buffer);
+    new TextDecoder(
+      "utf-8"
+    ).decode(buffer);
+
 
   let data;
+
 
   try {
     data =
       JSON.parse(text);
   } catch {
     throw new Error(
-      "拼多多返回非 JSON"
+      "拼多多接口返回非 JSON"
     );
   }
 
-  if (data.error_response) {
+
+  if (
+    data.error_response
+  ) {
     const e =
       data.error_response;
 
@@ -261,32 +317,36 @@ async function pddCall(env, extra) {
     );
   }
 
+
   return data;
 }
 
 
 function simplify(g) {
   const price =
-    typeof g.min_group_price ===
-    "number"
+    typeof g.min_group_price === "number"
       ? g.min_group_price / 100
       : null;
 
+
   const coupon =
-    typeof g.coupon_discount ===
-    "number"
+    typeof g.coupon_discount === "number"
       ? g.coupon_discount / 100
       : 0;
 
+
   return {
     goodsName:
-      g.goods_name || null,
+      g.goods_name ||
+      null,
 
     mallName:
-      g.mall_name || null,
+      g.mall_name ||
+      null,
 
     goodsSign:
-      g.goods_sign || null,
+      g.goods_sign ||
+      null,
 
     price,
 
@@ -337,6 +397,14 @@ async function searchKeyword(
         pid:
           env.PDD_PID,
 
+        /*
+         * 只搜索百亿补贴
+         */
+        activity_tags:
+          JSON.stringify([
+            7
+          ]),
+
         page:
           "1",
 
@@ -345,8 +413,11 @@ async function searchKeyword(
       }
     );
 
+
   const result =
-    data.goods_search_response || {};
+    data.goods_search_response ||
+    {};
+
 
   const list =
     Array.isArray(
@@ -355,7 +426,10 @@ async function searchKeyword(
       ? result.goods_list
       : [];
 
-  return list.map(simplify);
+
+  return list.map(
+    simplify
+  );
 }
 
 
@@ -366,12 +440,10 @@ async function scanGame(
   const items =
     new Map();
 
-  const errors = [];
+  const errors =
+    [];
 
-  /*
-   * 使用多个关键词交叉搜索，
-   * 降低漏掉商家的概率
-   */
+
   for (
     const query
     of game.queries
@@ -383,6 +455,7 @@ async function scanGame(
           query
         );
 
+
       for (
         const item
         of result
@@ -391,13 +464,17 @@ async function scanGame(
           item.goodsSign ||
           `${item.goodsName}|${item.price}`;
 
-        if (!items.has(key)) {
+
+        if (
+          !items.has(key)
+        ) {
           items.set(
             key,
             item
           );
         }
       }
+
     } catch (error) {
       errors.push({
         query,
@@ -411,8 +488,12 @@ async function scanGame(
     }
   }
 
+
   const all =
-    [...items.values()];
+    [
+      ...items.values()
+    ];
+
 
   const matches =
     all
@@ -436,9 +517,12 @@ async function scanGame(
             b.price ??
             Infinity;
 
-          return pa - pb;
+          return (
+            pa - pb
+          );
         }
       );
+
 
   return {
     id:
@@ -456,6 +540,9 @@ async function scanGame(
     target:
       game.target,
 
+    source:
+      "百亿补贴",
+
     rawCount:
       all.length,
 
@@ -463,10 +550,14 @@ async function scanGame(
       matches.length,
 
     best:
-      matches[0] || null,
+      matches[0] ||
+      null,
 
     topMatches:
-      matches.slice(0, 5),
+      matches.slice(
+        0,
+        5
+      ),
 
     errors
   };
@@ -474,12 +565,10 @@ async function scanGame(
 
 
 async function scanAll(env) {
-  const result = [];
+  const result =
+    [];
 
-  /*
-   * 顺序请求，避免短时间
-   * 给拼多多 API 太多压力
-   */
+
   for (
     const game
     of GAMES
@@ -491,6 +580,7 @@ async function scanAll(env) {
       )
     );
   }
+
 
   return result;
 }
@@ -513,6 +603,7 @@ function money(value) {
     return "—";
   }
 
+
   return (
     "¥" +
     (
@@ -524,12 +615,23 @@ function money(value) {
 }
 
 
-function clip(text, max = 90) {
-  if (!text) return "";
+function clip(
+  text,
+  max = 90
+) {
+  if (!text) {
+    return "";
+  }
 
-  return text.length > max
-    ? text.slice(0, max) + "…"
-    : text;
+
+  return (
+    text.length > max
+      ? text.slice(
+          0,
+          max
+        ) + "…"
+      : text
+  );
 }
 
 
@@ -537,8 +639,12 @@ function beijingTime(date) {
   const shifted =
     new Date(
       date.getTime() +
-      8 * 60 * 60 * 1000
+      8 *
+      60 *
+      60 *
+      1000
     );
+
 
   return {
     date:
@@ -547,10 +653,12 @@ function beijingTime(date) {
         .slice(0, 10),
 
     hour:
-      shifted.getUTCHours(),
+      shifted
+        .getUTCHours(),
 
     minute:
-      shifted.getUTCMinutes(),
+      shifted
+        .getUTCMinutes(),
 
     iso:
       shifted
@@ -581,31 +689,38 @@ async function bark(
   body,
   openUrl = null
 ) {
-  if (!env.BARK_KEY) {
+  if (
+    !env.BARK_KEY
+  ) {
     throw new Error(
       "未设置 BARK_KEY"
     );
   }
+
 
   const key =
     String(
       env.BARK_KEY
     ).trim();
 
-  /*
-   * 兼容只填 Bark Key
-   * 或完整 Bark URL
-   */
+
   const base =
-    key.startsWith("http")
-      ? key.replace(/\/+$/, "")
+    key.startsWith(
+      "http"
+    )
+      ? key.replace(
+          /\/+$/,
+          ""
+        )
       : `https://api.day.app/${key}`;
+
 
   let url =
     `${base}/` +
     `${encodeURIComponent(title)}/` +
     `${encodeURIComponent(body)}` +
     `?group=${encodeURIComponent("游戏卡带价格雷达")}`;
+
 
   if (openUrl) {
     url +=
@@ -615,10 +730,14 @@ async function bark(
       );
   }
 
+
   const response =
     await fetch(url);
 
-  if (!response.ok) {
+
+  if (
+    !response.ok
+  ) {
     throw new Error(
       `Bark 推送失败：${response.status}`
     );
@@ -635,12 +754,16 @@ async function readState(
       `game:${id}`
     );
 
+
   if (!raw) {
     return {};
   }
 
+
   try {
-    return JSON.parse(raw);
+    return JSON.parse(
+      raw
+    );
   } catch {
     return {};
   }
@@ -654,7 +777,9 @@ async function writeState(
 ) {
   await env.PRICE_STATE.put(
     `game:${id}`,
-    JSON.stringify(state)
+    JSON.stringify(
+      state
+    )
   );
 }
 
@@ -663,7 +788,9 @@ async function processPrices(
   env,
   scans
 ) {
-  const states = {};
+  const states =
+    {};
+
 
   for (
     const scan
@@ -671,8 +798,10 @@ async function processPrices(
   ) {
     const game =
       GAMES.find(
-        g => g.id === scan.id
+        g =>
+          g.id === scan.id
       );
+
 
     const previous =
       await readState(
@@ -680,13 +809,16 @@ async function processPrices(
         scan.id
       );
 
+
     const price =
       priceOf(scan);
+
 
     let belowTarget =
       Boolean(
         previous.belowTarget
       );
+
 
     const oldLow =
       typeof previous.historicalLow ===
@@ -694,8 +826,11 @@ async function processPrices(
         ? previous.historicalLow
         : null;
 
+
     const historicalLow =
-      typeof price === "number"
+      typeof price ===
+      "number"
+
         ? (
             oldLow === null
               ? price
@@ -704,12 +839,12 @@ async function processPrices(
                   price
                 )
           )
+
         : oldLow;
 
 
     /*
-     * 达到目标价：
-     * 只在第一次跌入目标区间时提醒
+     * 第一次进入目标价区间时立即 Bark
      */
     if (
       typeof price === "number" &&
@@ -717,53 +852,62 @@ async function processPrices(
       !belowTarget
     ) {
       try {
-        const body = [
-          `${scan.name} ${scan.version}`,
 
-          `当前最低：${money(price)}`,
+        const body =
+          [
+            `${scan.name} ${scan.version}`,
 
-          `目标价：≤ ${money(scan.target)}`,
+            `百亿补贴最低：${money(price)}`,
 
-          scan.best?.goodsName
-            ? `商品：${clip(scan.best.goodsName)}`
-            : null
-        ]
-          .filter(Boolean)
-          .join("\n");
+            `目标价：≤ ${money(scan.target)}`,
+
+            scan.best?.goodsName
+              ? `商品：${clip(scan.best.goodsName)}`
+              : null
+          ]
+            .filter(Boolean)
+            .join("\n");
+
 
         await bark(
           env,
-          "🎯 到目标价了",
+          "🎯 百亿补贴到目标价",
           body,
           searchUrl(game)
         );
 
-        belowTarget = true;
+
+        belowTarget =
+          true;
 
       } catch (error) {
-        /*
-         * Bark 失败则保持 false，
-         * 下一轮继续尝试提醒
-         */
+
         console.error(
           "Bark alert failed",
           error
         );
 
-        belowTarget = false;
+
+        /*
+         * 推送失败不锁定，
+         * 下一轮继续尝试
+         */
+        belowTarget =
+          false;
       }
     }
 
 
     /*
-     * 重新涨到目标价以上，
-     * 解锁下一次跌价提醒
+     * 涨回目标价以上，
+     * 解锁下一次跌破提醒
      */
     if (
       typeof price === "number" &&
       price > scan.target
     ) {
-      belowTarget = false;
+      belowTarget =
+        false;
     }
 
 
@@ -788,15 +932,20 @@ async function processPrices(
           .toISOString()
     };
 
+
     await writeState(
       env,
       scan.id,
       next
     );
 
-    states[scan.id] =
+
+    states[
+      scan.id
+    ] =
       next;
   }
+
 
   return states;
 }
@@ -813,10 +962,11 @@ async function morningReport(
       scheduledDate
     );
 
+
   /*
-   * 08:00、08:10、08:20
-   * 都允许补发。
-   * KV 会保证一天只发一次。
+   * Cron 每10分钟一次。
+   * 08:00~08:20均允许补发，
+   * KV保证一天仅一条晨报。
    */
   if (
     bj.hour !== 8 ||
@@ -825,12 +975,16 @@ async function morningReport(
     return false;
   }
 
+
   const last =
     await env.PRICE_STATE.get(
       "meta:lastDailyReportDate"
     );
 
-  if (last === bj.date) {
+
+  if (
+    last === bj.date
+  ) {
     return false;
   }
 
@@ -842,33 +996,40 @@ async function morningReport(
         const price =
           priceOf(scan);
 
+
         const state =
-          states[scan.id] ||
-          {};
+          states[
+            scan.id
+          ] || {};
+
 
         if (
           typeof price !== "number"
         ) {
           return (
             `${scan.short} ${scan.version}：` +
-            `暂无可信实体匹配 ｜ 目标 ${money(scan.target)}`
+            `百亿补贴暂无匹配 ｜ ` +
+            `目标 ${money(scan.target)}`
           );
         }
+
 
         const hit =
           price <= scan.target
             ? " ✅"
             : "";
 
+
         const low =
-          typeof state.historicalLow ===
-          "number"
+          typeof state.historicalLow === "number"
             ? ` ｜ 历史低 ${money(state.historicalLow)}`
             : "";
 
+
         return (
           `${scan.short} ${scan.version}：` +
-          `${money(price)} ｜ 目标 ${money(scan.target)}` +
+          `${money(price)} ｜ ` +
+          `目标 ${money(scan.target)}` +
           `${hit}${low}`
         );
       }
@@ -877,7 +1038,7 @@ async function morningReport(
 
   await bark(
     env,
-    "☀️ 08:00 游戏价格晨报",
+    "☀️ 08:00 百亿补贴游戏晨报",
     lines.join("\n")
   );
 
@@ -887,6 +1048,7 @@ async function morningReport(
     bj.date
   );
 
+
   return true;
 }
 
@@ -895,20 +1057,27 @@ async function runMonitor(
   env,
   scheduledDate
 ) {
-  if (!env.PRICE_STATE) {
+  if (
+    !env.PRICE_STATE
+  ) {
     throw new Error(
       "PRICE_STATE KV 未绑定"
     );
   }
 
+
   const scans =
-    await scanAll(env);
+    await scanAll(
+      env
+    );
+
 
   const states =
     await processPrices(
       env,
       scans
     );
+
 
   const morning =
     await morningReport(
@@ -918,8 +1087,10 @@ async function runMonitor(
       scheduledDate
     );
 
+
   return {
-    ok: true,
+    ok:
+      true,
 
     beijingTime:
       beijingTime(
@@ -945,6 +1116,7 @@ function json(
       null,
       2
     ),
+
     {
       status,
 
@@ -982,18 +1154,27 @@ function homepage() {
 <style>
 
 * {
-  box-sizing: border-box;
+  box-sizing:
+    border-box;
 }
 
 body {
   margin: 0;
-  min-height: 100vh;
 
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  min-height:
+    100vh;
 
-  padding: 24px;
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  padding:
+    24px;
 
   font-family:
     -apple-system,
@@ -1001,22 +1182,31 @@ body {
     "Segoe UI",
     sans-serif;
 
-  background: #f5f6f8;
-  color: #111827;
+  background:
+    #f5f6f8;
+
+  color:
+    #111827;
 }
 
 .card {
-  width: 100%;
-  max-width: 700px;
+  width:
+    100%;
 
-  padding: 30px;
+  max-width:
+    700px;
 
-  background: white;
+  padding:
+    30px;
+
+  background:
+    white;
 
   border:
     1px solid #e5e7eb;
 
-  border-radius: 24px;
+  border-radius:
+    24px;
 
   box-shadow:
     0 16px 40px
@@ -1024,7 +1214,8 @@ body {
 }
 
 .badge {
-  display: inline-block;
+  display:
+    inline-block;
 
   padding:
     6px 12px;
@@ -1033,10 +1224,10 @@ body {
     999px;
 
   background:
-    #eef6ff;
+    #fff1f2;
 
   color:
-    #2563eb;
+    #e11d48;
 
   font-size:
     14px;
@@ -1104,13 +1295,12 @@ footer {
 
 </head>
 
-
 <body>
 
 <main class="card">
 
 <span class="badge">
-运行中
+百亿补贴监控中
 </span>
 
 <h1>
@@ -1118,8 +1308,8 @@ footer {
 </h1>
 
 <p>
-每 10 分钟检查一次拼多多公开商品价格。
-达到目标价立即提醒，
+每 10 分钟查询一次百亿补贴商品。
+达到目标价立即通过 Bark 提醒，
 每天北京时间 08:00 发送价格晨报。
 </p>
 
@@ -1156,8 +1346,7 @@ footer {
 
 <footer>
 
-仅监控公开商品信息。
-不提供自动下单或支付服务。
+价格以拼多多百亿补贴接口实时结果为准。
 
 </footer>
 
@@ -1177,6 +1366,7 @@ export default {
     env
   ) {
     try {
+
       const url =
         new URL(
           request.url
@@ -1188,6 +1378,7 @@ export default {
       ) {
         return new Response(
           homepage(),
+
           {
             headers: {
               "content-type":
@@ -1198,15 +1389,13 @@ export default {
       }
 
 
-      /*
-       * 检查 Secret / KV
-       */
       if (
         url.pathname ===
         "/health"
       ) {
         return json({
-          ok: true,
+          ok:
+            true,
 
           pddClientId:
             Boolean(
@@ -1233,6 +1422,9 @@ export default {
               env.PRICE_STATE
             ),
 
+          mode:
+            "百亿补贴",
+
           beijingTime:
             beijingTime(
               new Date()
@@ -1242,61 +1434,83 @@ export default {
 
 
       /*
-       * 手动查看当前搜索结果。
-       * 不发 Bark，不修改状态。
+       * 手动扫描，不触发 Bark、不修改 KV
        */
       if (
         url.pathname ===
         "/scan"
       ) {
+
         const scans =
-          await scanAll(env);
+          await scanAll(
+            env
+          );
 
         return json({
-          ok: true,
+          ok:
+            true,
+
+          mode:
+            "百亿补贴",
+
           scans
         });
       }
 
 
       /*
-       * 查看历史价格状态
+       * 查看保存的价格状态
        */
       if (
         url.pathname ===
         "/status"
       ) {
-        if (!env.PRICE_STATE) {
+
+        if (
+          !env.PRICE_STATE
+        ) {
           return json(
             {
-              ok: false,
+              ok:
+                false,
+
               error:
                 "PRICE_STATE KV 未绑定"
             },
+
             500
           );
         }
 
-        const states = {};
+
+        const states =
+          {};
+
 
         for (
           const game
           of GAMES
         ) {
-          states[game.id] =
+          states[
+            game.id
+          ] =
             await readState(
               env,
               game.id
             );
         }
 
+
         states.lastDailyReportDate =
           await env.PRICE_STATE.get(
             "meta:lastDailyReportDate"
           );
 
+
         return json({
-          ok: true,
+          ok:
+            true,
+
           states
         });
       }
@@ -1305,7 +1519,8 @@ export default {
       return new Response(
         "Not Found",
         {
-          status: 404
+          status:
+            404
         }
       );
 
@@ -1314,7 +1529,8 @@ export default {
 
       return json(
         {
-          ok: false,
+          ok:
+            false,
 
           error:
             String(
@@ -1322,6 +1538,7 @@ export default {
               error
             )
         },
+
         500
       );
     }
@@ -1329,30 +1546,35 @@ export default {
 
 
   /*
-   * Cloudflare Cron
-   * 每 10 分钟触发
+   * wrangler Cron：
+   * 每10分钟执行一次
    */
   async scheduled(
     event,
     env,
     ctx
   ) {
+
     ctx.waitUntil(
+
       runMonitor(
         env,
+
         new Date(
           event.scheduledTime
         )
       )
-      .catch(
-        error => {
-          console.error(
-            "Monitor failed:",
-            error?.stack ||
-            error
-          );
-        }
-      )
+
+        .catch(
+          error => {
+
+            console.error(
+              "Monitor failed:",
+              error?.stack ||
+              error
+            );
+          }
+        )
     );
   }
 };
