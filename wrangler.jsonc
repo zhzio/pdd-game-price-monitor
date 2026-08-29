@@ -15,9 +15,5 @@
     {
       "binding": "PRICE_STATE"
     }
-  ],
-
-  "browser": {
-    "binding": "BROWSER"
-  }
+  ]
 }
